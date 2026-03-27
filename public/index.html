@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>一括キャプ太郎 | WEBサイトキャプチャ生成（医療広告ガイドライン対応）</title>
+    <meta name="description" content="WEBサイトのファーストビューキャプチャを一括生成し、医療広告ガイドラインに基づくNGワード・人物写真を自動検出するツールです。">
+    <link rel="icon" type="image/jpeg" href="favicon.jpeg">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            border: 1px solid #eaeaea;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: bold;
+            color: #495057;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        textarea {
+            padding: 12px 15px;
+            width: 100%;
+            box-sizing: border-box;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-family: inherit;
+            transition: border-color 0.3s, box-shadow 0.3s;
+            background-color: #fcfcfc;
+        }
+
+        input[type="text"]:focus,
+        input[type="number"]:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 4px rgba(0, 123, 255, 0.15);
+            background-color: #fff;
+        }
+
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        #status {
+            margin-top: 15px;
+            color: #666;
+            font-weight: bold;
+        }
+
+        #resultArea {
+            margin-top: 30px;
+            display: none;
+        }
+
+        #resultImage {
+            max-width: 100%;
+            border: 1px solid #ddd;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .download-btn {
+            display: inline-block;
+            margin-top: 10px;
+            background-color: #28a745;
+            text-decoration: none;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 4px;
+        }
+
+        #captureBtn {
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            padding: 15px 40px;
+            font-size: 1.3rem;
+            font-weight: bold;
+            border-radius: 50px;
+            box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        #captureBtn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 123, 255, 0.4);
+            background: linear-gradient(135deg, #008cff, #0062cc);
+        }
+
+        #captureBtn:disabled {
+            background: #cccccc;
+            box-shadow: none;
+            transform: none;
+        }
+
+        #usageInfo {
+            padding: 10px;
+            background-color: #f3f3f3;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-weight: bold;
+            color: #333;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div style="margin-bottom: 20px; text-align: center;">
+        <img src="header.jpeg" alt="一括キャプ太郎 | WEBサイトキャプチャ生成（医療広告ガイドライン対応）"
+            style="max-width: 100%; height: auto; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #eaeaea;">
+    </div>
+
+    <div id="usageInfo" style="display: none;">
+        読み込み中...
+    </div>
+
+    <div
+        style="background-color: transparent; border: 1px solid #ced4da; padding: 15px; border-radius: 5px; margin-bottom: 25px;">
+        <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 1rem; color: #495057;">📝 ツールの使い方</h3>
+        <ol style="margin-bottom: 0; padding-left: 20px; line-height: 1.6; color: #333; font-size: 0.9em;">
+            <li><strong>「判定モード」</strong>を選択します（通常、または医療広告ガイドライン対応）。</li>
+            <li>キャプチャ画像を生成したい<strong>「対象のURL」</strong>を入力します（改行して複数入力可能。最大5件）。</li>
+            <li>必要に応じて画像サイズを指定し、<strong>「✨ キャプチャを生成する」</strong>ボタンをクリックします。</li>
+            <li>
+                <strong style="color: #007bff;">【通常モード】</strong> 生成された画像をそのまま確認します。<br>
+                <strong style="color: #d9534f;">【医療モード】</strong> AIが<strong>NGワードと人物写真</strong>が含まれていないかを自動判定します。<br>
+                NG判定が出た画像は、NGワードが含まれているか、著名人が使われていないかをご自身で確認した上で「問題無し」か「別のURLを再取得」するかを選択してください。
+            </li>
+            <li>すべての画像が「問題無し」状態になると、一括で<strong>ZIPダウンロード</strong>が可能になります。</li>
+        </ol>
+    </div>
+
+    <div class="form-group" style="padding: 15px 20px;">
+        <label style="margin-bottom: 15px;">判定モード</label>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+            <label style="font-weight: normal; margin-bottom: 0; cursor: pointer; display: flex; align-items: center;">
+                <input type="radio" name="captureMode" value="normal" onchange="toggleMedicalInfo()" checked
+                    style="width: auto; margin-right: 10px; transform: scale(1.2);">
+                通常（キャプチャのみ）
+            </label>
+            <label style="font-weight: normal; margin-bottom: 0; cursor: pointer; display: flex; align-items: center;">
+                <input type="radio" name="captureMode" value="medical" onchange="toggleMedicalInfo()"
+                    style="width: auto; margin-right: 10px; transform: scale(1.2);">
+                医療広告ガイドライン対応（NGワード・人物写真判定あり）
+            </label>
+        </div>
+    </div>
+
+    <div id="medicalInfoBlock"
+        style="padding: 15px; background-color: #ffeaea; border: 1px solid #ffcccc; border-radius: 5px; margin-bottom: 25px; font-size: 0.9em; display: none;">
+        <h4 style="margin-top: 0; margin-bottom: 10px; color: #d9534f;">⚠️ 医療広告ガイドライン対応モードについて</h4>
+        <p style="margin-top: 0; margin-bottom: 10px; color: #333;">
+            このモードでは、ページ内に<strong>「人物写真（顔）」</strong>が使われていないか、また以下の<strong>「NGワード」</strong>が含まれていないかをAIが自動判定します。</p>
+        <strong>【判定対象となるNGワード一覧】</strong>
+        <ul id="ngWordsList"
+            style="margin-top: 5px; margin-bottom: 0; padding-left: 0; list-style-position: inside; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 10px;">
+        </ul>
+    </div>
+
+    <div class="form-group">
+        <label>対象のURL <span
+                style="font-weight: normal; color: #777; font-size: 0.9em;">（最大5件まで、改行で区切ってください）</span></label>
+        <textarea id="urlInput" placeholder="https://example.com&#10;https://google.com" rows="5"></textarea>
+    </div>
+
+    <div style="display: flex; gap: 20px;" class="form-group">
+        <div style="flex: 1;">
+            <label>取得する幅 (px)</label>
+            <input type="number" id="widthInput" value="1280">
+        </div>
+        <div style="flex: 1;">
+            <label>取得する高さ (px)</label>
+            <input type="number" id="heightInput" value="650">
+        </div>
+    </div>
+
+    <div style="text-align: center; margin-top: 30px; margin-bottom: 20px;">
+        <button id="captureBtn" onclick="takeScreenshot()">✨ キャプチャを生成する</button>
+    </div>
+    <div id="status"></div>
+
+    <div id="progressContainer" style="display: none; margin-top: 15px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 0.9em; color: #555;">
+            <span id="progressLabel">処理中...</span>
+            <span id="progressText">0%</span>
+        </div>
+        <div style="width: 100%; background-color: #e9ecef; border-radius: 4px; overflow: hidden; height: 10px;">
+            <div id="progressBar"
+                style="width: 0%; height: 100%; background-color: #007bff; transition: width 0.3s ease;"></div>
+        </div>
+    </div>
+
+    <div id="processLogs"
+        style="margin-top: 15px; padding: 10px; background-color: #f8f9fa; border-left: 4px solid #007bff; display: none; white-space: pre-wrap; font-size: 0.9em; line-height: 1.5;">
+    </div>
+
+    <div id="resultArea"
+        style="display: none; padding: 20px; border-radius: 8px; background-color: #f8f9fa; border: 1px solid #dee2e6;">
+        <h3 id="resultTitle" style="margin-top: 0; margin-bottom: 20px;">判定結果</h3>
+
+        <div id="imagesContainer">
+            <!-- プレビュー画像がここに差し込まれる -->
+        </div>
+
+        <div id="actionButtons" style="display: none; gap: 15px; margin-top: 30px;">
+            <button id="downloadAllBtn" onclick="downloadAll()"
+                style="flex: 1; background-color: #28a745; color: white; border: none; padding: 15px; border-radius: 5px; cursor: pointer; font-size: 1.1em; font-weight: bold;">すべての画像をダウンロードする</button>
+        </div>
+    </div>
+
+    <script>
+        // =====================================================
+        // 設定
+        // =====================================================
+        // ⚠️ 注意: APIキーがクライアント側に露出しています。
+        // ApiFlash: ダッシュボードでドメイン制限を設定してください。
+        // Vision API: Google Cloud Console で HTTPリファラー制限を設定してください。
+        const API_FLASH_KEY = '91b5039ab597473f90ac4ad1de56202f';
+        const GOOGLE_CLOUD_VISION_API_KEY = 'AIzaSyASFBMI_Sgt5TsW9j4d_mifd2RR4U3P5cw';
+        const MONTHLY_LIMIT = 100;
+
+        // 医療広告ガイドライン関連のNGワードリスト
+        const NG_WORDS = [
+            "絶対治る", "必ず治る", "100%", "完治する", "日本一", "No.1", "ナンバーワン",
+            "最高", "最先端", "最新", "完璧", "当院だけ", "他院より", "類を見ない",
+            "絶対安全", "副作用なし", "痛みなし", "無痛", "失敗しない", "最善"
+        ];
+
+        let globalState = [];
+
+        // =====================================================
+        // 利用状況管理 (ApiFlash Quota API)
+        // =====================================================
+        let currentRemaining = MONTHLY_LIMIT; // 初期フォールバック
+
+        async function updateUsageDisplay() {
+            try {
+                const url = `https://api.apiflash.com/v1/urltoimage/quota?access_key=${API_FLASH_KEY}`;
+                const response = await fetch(url);
+                if (response.ok) {
+                    const data = await response.json();
+                    currentRemaining = data.remaining;
+                    const used = data.limit - data.remaining;
+                    document.getElementById('usageInfo').innerHTML =
+                        `今月のキャプチャ作成状況: <strong>${used} / ${data.limit} 枚</strong> <span style="font-weight: normal; font-size: 0.9em; color: #555; margin-left: 10px;">(残り作成可能枚数: <strong style="color: #d9534f;">${data.remaining}</strong> 枚)</span>`;
+                } else {
+                    document.getElementById('usageInfo').textContent = '利用状況の取得に失敗しました';
+                }
+            } catch (e) {
+                document.getElementById('usageInfo').textContent = '利用状況を取得できません';
+            }
+        }
+
+        // =====================================================
+        // Canvas ベースの画像処理
+        // =====================================================
+
+        /** Blob から Image オブジェクトを生成 */
+        function loadImageFromBlob(blob) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                const url = URL.createObjectURL(blob);
+                img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+                img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像の読み込みに失敗')); };
+                img.src = url;
+            });
+        }
+
+        /** Canvas を Blob に変換（WebP優先、非対応ならPNG） */
+        function canvasToBlob(canvas) {
+            return new Promise((resolve) => {
+                canvas.toBlob((blob) => {
+                    if (blob) {
+                        resolve(blob);
+                    } else {
+                        // WebP非対応ブラウザのフォールバック
+                        canvas.toBlob((pngBlob) => resolve(pngBlob), 'image/png');
+                    }
+                }, 'image/webp', 0.92);
+            });
+        }
+
+        /** 画像を指定サイズにクロップ（ファーストビュー切り出し） */
+        async function cropImage(blob, targetWidth, targetHeight) {
+            const img = await loadImageFromBlob(blob);
+            const sourceWidth = img.width;
+            const sourceHeight = img.height;
+
+            if (sourceHeight <= targetHeight) {
+                // クロップ不要
+                return blob;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = sourceWidth;
+            canvas.height = Math.min(targetHeight, sourceHeight);
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, sourceWidth, canvas.height, 0, 0, sourceWidth, canvas.height);
+            return canvasToBlob(canvas);
+        }
+
+        /** 画像に赤枠を描画 */
+        async function drawRedBox(blob, vertices) {
+            if (!vertices || vertices.length < 3) return blob;
+
+            const img = await loadImageFromBlob(blob);
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+
+            const xs = vertices.map(v => v.x || 0);
+            const ys = vertices.map(v => v.y || 0);
+            const minX = Math.max(0, Math.min(...xs));
+            const minY = Math.max(0, Math.min(...ys));
+            const maxX = Math.min(img.width, Math.max(...xs));
+            const maxY = Math.min(img.height, Math.max(...ys));
+
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 5;
+            ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+
+            return canvasToBlob(canvas);
+        }
+
+        /** Blob → Data URL */
+        function blobToDataUrl(blob) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        /** Blob → Base64 (Data URL のヘッダを除いた部分) */
+        async function blobToBase64(blob) {
+            const dataUrl = await blobToDataUrl(blob);
+            return dataUrl.split(',')[1];
+        }
+
+        // =====================================================
+        // Google Cloud Vision API (OCR + 顔検出)
+        // =====================================================
+        async function checkImageForNgWords(base64Image) {
+            const url = `https://vision.googleapis.com/v1/images:annotate?key=${GOOGLE_CLOUD_VISION_API_KEY}`;
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    requests: [{
+                        image: { content: base64Image },
+                        features: [
+                            { type: 'DOCUMENT_TEXT_DETECTION' },
+                            { type: 'FACE_DETECTION' }
+                        ]
+                    }]
+                })
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                let errorMsg = `HTTP ${response.status}`;
+                try {
+                    const errorJson = JSON.parse(errorBody);
+                    if (errorJson.error && errorJson.error.message) {
+                        errorMsg += ` - ${errorJson.error.message}`;
+                    }
+                } catch { /* ignore */ }
+                throw new Error(`Vision API 実行エラー: ${errorMsg}`);
+            }
+
+            const result = await response.json();
+
+            // API内部エラーチェック
+            if (result.responses && result.responses[0] && result.responses[0].error) {
+                const errorMsg = result.responses[0].error.message || 'Unknown API Error';
+                throw new Error(`Vision API Internal Error: ${errorMsg}`);
+            }
+
+            // 1. NGワードチェック（テキスト検出）
+            const fullTextAnnotation = result.responses?.[0]?.fullTextAnnotation;
+            if (fullTextAnnotation && fullTextAnnotation.text) {
+                const normalizedText = fullTextAnnotation.text.replace(/[\r\n\s　]/g, '');
+
+                for (const word of NG_WORDS) {
+                    if (normalizedText.includes(word)) {
+                        console.log(`NG Word Detected: ${word}`);
+                        let ngVertices = null;
+                        const textAnnotations = result.responses[0].textAnnotations;
+                        if (textAnnotations) {
+                            for (let i = 1; i < textAnnotations.length; i++) {
+                                const desc = textAnnotations[i].description;
+                                if (desc.includes(word) || word.includes(desc)) {
+                                    if (textAnnotations[i].boundingPoly && textAnnotations[i].boundingPoly.vertices) {
+                                        ngVertices = textAnnotations[i].boundingPoly.vertices;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        return { reason: `NGワード「${word}」`, vertices: ngVertices };
+                    }
+                }
+            }
+
+            // 2. 顔検出
+            const faceAnnotations = result.responses?.[0]?.faceAnnotations;
+            if (faceAnnotations) {
+                for (const face of faceAnnotations) {
+                    if (face.detectionConfidence && face.detectionConfidence > 0.5) {
+                        if (face.boundingPoly && face.boundingPoly.vertices) {
+                            console.log(`Face Detected with confidence: ${face.detectionConfidence}`);
+                            return { reason: '人物の顔（AI視覚判定）', vertices: face.boundingPoly.vertices };
+                        }
+                    }
+                }
+            }
+
+            return false; // NGなし
+        }
+
+        // =====================================================
+        // APIFlash スクリーンショット取得
+        // =====================================================
+        async function fetchScreenshot(targetUrl, width) {
+            const apiUrl = `https://api.apiflash.com/v1/urltoimage`
+                + `?access_key=${API_FLASH_KEY}`
+                + `&url=${encodeURIComponent(targetUrl)}`
+                + `&width=${width}`
+                + `&format=png`
+                + `&response_type=image`
+                + `&full_page=true`
+                + `&ttl=2592000`;
+
+            let response;
+            try {
+                response = await fetch(apiUrl);
+            } catch (e) {
+                // CORS やネットワークエラーの場合
+                throw new Error(
+                    'キャプチャAPIへの接続に失敗しました。\n'
+                    + 'ブラウザのCORS制限が原因の可能性があります。\n'
+                    + '詳細はコンソールログを確認してください。'
+                );
+            }
+
+            if (!response.ok) {
+                throw new Error(`キャプチャ取得失敗 (HTTP ${response.status})`);
+            }
+
+            return response.blob();
+        }
+
+        // =====================================================
+        // 1件のURL を処理する
+        // =====================================================
+        async function processOneUrl(url, width, height, mode) {
+            // 1. スクリーンショット取得
+            const fullBlob = await fetchScreenshot(url, width);
+
+            // 2. ファーストビューを切り出す
+            const croppedBlob = await cropImage(fullBlob, width, height);
+
+            const imageDataUrl = await blobToDataUrl(croppedBlob);
+            const hostname = new URL(url).hostname.replace(/^www\./, '');
+            const imageName = `${hostname}.png`;
+
+            // 3. OCR + 顔検出（医療モードのみ）
+            if (mode === 'medical') {
+                const base64 = await blobToBase64(croppedBlob);
+                let isNg;
+                try {
+                    isNg = await checkImageForNgWords(base64);
+                } catch (e) {
+                    throw new Error(`テキスト解析(OCR)中にエラーが発生しました: ${e.message}`);
+                }
+
+                if (isNg !== false) {
+                    const ngReason = isNg.reason;
+                    let ngImageDataUrl = imageDataUrl;
+                    if (isNg.vertices) {
+                        const ngBlob = await drawRedBox(croppedBlob, isNg.vertices);
+                        ngImageDataUrl = await blobToDataUrl(ngBlob);
+                    }
+                    return {
+                        url, name: imageName, status: 'ng',
+                        ng_reason: ngReason,
+                        image: imageDataUrl,
+                        ng_image: ngImageDataUrl
+                    };
+                }
+            }
+
+            return {
+                url, name: imageName, status: 'ok',
+                image: imageDataUrl
+            };
+        }
+
+        // =====================================================
+        // UI 操作
+        // =====================================================
+
+        function markAsOk(index) {
+            globalState[index].status = 'ok';
+            renderResults();
+        }
+
+        async function retryUrl(index) {
+            const inputEl = document.getElementById('retryInput_' + index);
+            const newUrl = inputEl.value.trim();
+            if (!newUrl) { alert('URLを入力してください'); return; }
+
+            const btn = document.getElementById('retryBtn_' + index);
+            btn.disabled = true;
+            btn.textContent = '取得中...';
+
+            const width = parseInt(document.getElementById('widthInput').value) || 1280;
+            const height = parseInt(document.getElementById('heightInput').value) || 650;
+            const mode = document.querySelector('input[name="captureMode"]:checked').value;
+
+            try {
+                const result = await processOneUrl(newUrl, width, height, mode);
+                globalState[index] = result;
+                renderResults();
+            } catch (e) {
+                alert('エラーが発生しました: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = 'この枠だけ再取得';
+            }
+        }
+
+        function renderResults() {
+            const container = document.getElementById('imagesContainer');
+            container.innerHTML = '';
+
+            let allOk = true;
+
+            globalState.forEach((item, index) => {
+                const box = document.createElement('div');
+                box.style.marginBottom = '30px';
+                box.style.padding = '15px';
+                box.style.border = '1px solid #ccc';
+                box.style.borderRadius = '5px';
+                box.style.backgroundColor = '#fff';
+
+                if (item.status === 'ok') {
+                    box.style.borderColor = '#28a745';
+                    box.innerHTML = `
+                        <h4 style="color: #28a745; margin-top: 0;">✅ 問題無し: <a href="${item.url}" target="_blank" style="color: #28a745; text-decoration: underline;">${item.url}</a></h4>
+                        <img src="${item.image}" style="max-width: 100%; border: 1px solid #eee;">
+                    `;
+                } else {
+                    allOk = false;
+                    box.style.borderColor = '#dc3545';
+                    box.innerHTML = `
+                        <h4 style="color: #dc3545; margin-top: 0;">⚠️ NG判定: <a href="${item.url}" target="_blank" style="color: #dc3545; text-decoration: underline;">${item.url}</a></h4>
+                        <p style="color: #dc3545; font-weight: bold;">理由: ${item.ng_reason}</p>
+                        <img src="${item.ng_image}" style="max-width: 100%; border: 3px solid #dc3545; margin-bottom: 15px;">
+
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 10px;">
+                            <p style="margin-top: 0; font-weight: bold;">この画像に対するアクションを選択してください：</p>
+                            <button onclick="markAsOk(${index})" style="background-color: #ffc107; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 15px;">特例として「問題無し」とする</button>
+
+                            <div style="display: flex; gap: 10px;">
+                                <input type="text" id="retryInput_${index}" placeholder="別のURLを入力して再取得..." style="flex: 1; padding: 8px;">
+                                <button id="retryBtn_${index}" onclick="retryUrl(${index})" style="background-color: #6c757d; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; white-space: nowrap;">この枠だけ再取得</button>
+                            </div>
+                        </div>
+                    `;
+                }
+                container.appendChild(box);
+            });
+
+            const actionButtons = document.getElementById('actionButtons');
+            if (allOk && globalState.length > 0) {
+                actionButtons.style.display = 'flex';
+            } else {
+                actionButtons.style.display = 'none';
+            }
+        }
+
+        // =====================================================
+        // ZIP ダウンロード (JSZip)
+        // =====================================================
+        async function downloadAll() {
+            const btn = document.getElementById('downloadAllBtn');
+            btn.disabled = true;
+            btn.textContent = 'ダウンロード準備中...';
+
+            try {
+                if (globalState.length === 1) {
+                    // 1枚だけの場合は直接ダウンロード
+                    const a = document.createElement('a');
+                    a.href = globalState[0].image;
+                    a.download = globalState[0].name;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    return;
+                }
+
+                // 複数枚: JSZip で ZIP 生成
+                const zip = new JSZip();
+                for (const item of globalState) {
+                    const base64 = item.image.split(',')[1];
+                    zip.file(item.name, base64, { base64: true });
+                }
+
+                const zipBlob = await zip.generateAsync({ type: 'blob' });
+                const downloadUrl = URL.createObjectURL(zipBlob);
+
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = 'screenshots.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(downloadUrl);
+            } catch (e) {
+                alert('エラーが発生しました: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'すべての画像をダウンロードする';
+            }
+        }
+
+        // =====================================================
+        // メイン処理: キャプチャ生成
+        // =====================================================
+        async function takeScreenshot() {
+            const urlsValue = document.getElementById('urlInput').value;
+            const width = parseInt(document.getElementById('widthInput').value) || 1280;
+            const height = parseInt(document.getElementById('heightInput').value) || 650;
+            const mode = document.querySelector('input[name="captureMode"]:checked').value;
+
+            const btn = document.getElementById('captureBtn');
+            const status = document.getElementById('status');
+            const progressContainer = document.getElementById('progressContainer');
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const resultArea = document.getElementById('resultArea');
+            const processLogsDiv = document.getElementById('processLogs');
+
+            const urls = urlsValue.split('\n').map(u => u.trim()).filter(u => u);
+
+            if (urls.length === 0) { alert('URLを入力してください'); return; }
+            if (urls.length > 5) { alert('URLは5件までしか一度に処理できません'); return; }
+
+            // 上限チェック
+            if (urls.length > currentRemaining) {
+                alert(`API上限に達します。現在の残り作成可能枚数は ${currentRemaining} 枚です。`);
+                return;
+            }
+
+            // UI 初期化
+            btn.disabled = true;
+            const statusMessage = urls.length > 1
+                ? `⏳ ${urls.length}件のキャプチャを生成中...（数十秒〜数分かかる場合があります）`
+                : '⏳ キャプチャを生成中...（数秒〜十数秒かかります）';
+            status.textContent = statusMessage;
+            resultArea.style.display = 'none';
+            processLogsDiv.style.display = 'none';
+            processLogsDiv.textContent = '';
+
+            // プログレスバー
+            progressContainer.style.display = 'block';
+            progressBar.style.width = '5%';
+            progressText.textContent = '5%';
+            progressBar.style.backgroundColor = '#007bff';
+            document.getElementById('progressLabel').textContent = '処理を開始します…';
+
+            const processLogs = [];
+            let successfulCaptures = 0;
+            globalState = [];
+
+            try {
+                for (let i = 0; i < urls.length; i++) {
+                    const url = urls[i];
+                    const pct = Math.round(((i + 0.5) / urls.length) * 90 + 5);
+                    progressBar.style.width = pct + '%';
+                    progressText.textContent = pct + '%';
+                    document.getElementById('progressLabel').textContent = `処理中 (${i + 1}/${urls.length}): ${url}`;
+
+                    try {
+                        const result = await processOneUrl(url, width, height, mode);
+                        globalState.push(result);
+                        successfulCaptures++;
+
+                        if (result.status === 'ng') {
+                            processLogs.push(`${url} は「${result.ng_reason}」が検出されました。`);
+                        } else {
+                            processLogs.push(`${url} は正常に取り込みが完了しました。`);
+                        }
+                    } catch (e) {
+                        processLogs.push(`${url} はキャプチャの取得自体に失敗しました。(${e.message})`);
+                    }
+
+                    // APIレート制限回避
+                    if (urls.length > 1 && i < urls.length - 1) {
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                }
+
+                if (successfulCaptures === 0) {
+                    throw new Error(`有効な画像を1枚も取得できませんでした。\nログ:\n${processLogs.join('\n')}`);
+                }
+
+                // 使用量更新 (APIから最新状態を取得)
+                await updateUsageDisplay();
+
+                // 結果表示
+                renderResults();
+                resultArea.style.display = 'block';
+
+                if (processLogs.length > 0) {
+                    processLogsDiv.textContent = processLogs.join('\n');
+                    processLogsDiv.style.display = 'block';
+                }
+
+                status.textContent = '';
+            } catch (error) {
+                status.textContent = '❌ エラー: ' + error.message;
+                progressBar.style.backgroundColor = '#dc3545';
+            } finally {
+                btn.disabled = false;
+                document.getElementById('progressLabel').textContent = '完了';
+                if (!status.textContent.includes('エラー')) {
+                    progressBar.style.width = '100%';
+                    progressText.textContent = '100%';
+                    setTimeout(() => { progressContainer.style.display = 'none'; }, 1500);
+                }
+            }
+        }
+
+        // =====================================================
+        // 初期化
+        // =====================================================
+        function toggleMedicalInfo() {
+            const mode = document.querySelector('input[name="captureMode"]:checked').value;
+            document.getElementById('medicalInfoBlock').style.display = (mode === 'medical') ? 'block' : 'none';
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // 使用状況表示
+            updateUsageDisplay();
+
+            // NGワード一覧表示
+            const listEl = document.getElementById('ngWordsList');
+            listEl.innerHTML = '';
+            NG_WORDS.forEach(word => {
+                const li = document.createElement('li');
+                li.textContent = word;
+                listEl.appendChild(li);
+            });
+
+            toggleMedicalInfo();
+        });
+    </script>
+    <footer
+        style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 1px solid #eaeaea; color: #999; font-size: 0.85em;">
+        Powered by リードクリエーション株式会社
+    </footer>
+</body>
+
+</html>

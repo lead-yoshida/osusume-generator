@@ -1,0 +1,14 @@
+{
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "functions/**",
+      "capture.php",
+      "index.php",
+      "debug_vision.php"
+    ]
+  }
+}
