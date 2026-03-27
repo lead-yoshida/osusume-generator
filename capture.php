@@ -7,6 +7,7 @@ error_reporting(E_ALL);
 // --- 設定 ---
 $apiKey = '91b5039ab597473f90ac4ad1de56202f'; // ApiFlash API Key
 $googleCloudVisionApiKey = 'AIzaSyASFBMI_Sgt5TsW9j4d_mifd2RR4U3P5cw'; // Google Cloud Vision API Keyを指定してください
+$geminiApiKey = 'AIzaSyDymNDleDXe2STcrdWEQ9Ue9u50VyNrgf4'; // Gemini API Key
 $usageFile = 'usage.json';
 $limit = 100;
 $fallbackUrl = 'https://yahoo.co.jp/'; // 暫定のFallback URL (NG時に取得するURL)
@@ -36,7 +37,7 @@ function send_json_error($message, $statusCode)
  * @return array|bool NGワード等が含まれている場合は原因と座標(array)、それ以外はfalse
  * @throws Exception API呼び出しに失敗した場合（エラーレスポンスなど）
  */
-function check_image_for_ng_words($imageData, $ngWords, $visionApiKey)
+function check_image_for_ng_words($imageData, $ngWords, $visionApiKey, &$extractedText = null)
 {
     if (empty($visionApiKey) || $visionApiKey === 'YOUR_GOOGLE_CLOUD_VISION_API_KEY') {
         throw new Exception("Google Cloud Vision API key is not set.");
@@ -90,7 +91,8 @@ function check_image_for_ng_words($imageData, $ngWords, $visionApiKey)
 
         // 1. NGワードチェック (テキスト検出)
         if (isset($result['responses'][0]['fullTextAnnotation']['text'])) {
-            $fullText = $result['responses'][0]['fullTextAnnotation']['text'];
+            $extractedText = $result['responses'][0]['fullTextAnnotation']['text'];
+            $fullText = $extractedText;
 
             // 空白などを除去してチェックしやすくする
             $normalizedText = str_replace(["\r", "\n", " ", "　"], "", $fullText);
@@ -197,6 +199,56 @@ function crop_webp_image($imageData, $targetWidth, $targetHeight, $startY = 0)
     return $croppedData ? $croppedData : $imageData;
 }
 
+/**
+ * 画像Base64から店舗の紹介文とおすすめポイントを生成する（Gemini 2.5 Flash使用）
+ */
+function generate_store_info_from_gemini($base64Image, $geminiApiKey) {
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" . $geminiApiKey;
+    $prompt = "この店舗WEBページのキャプチャ画像から、店舗の紹介文（200文字程度）と、おすすめポイント（1行で3点）を作成してください。出力は必ず以下のJSON形式のみとし、Markdown表記（```jsonなど）は絶対に付けず、JSONのテキスト文字列のみを返してください。\n{\n    \"intro\": \"紹介文テキスト\",\n    \"points\": [\"ポイント1\", \"ポイント2\", \"ポイント3\"]\n}";
+
+    $payload = [
+        "contents" => [
+            [
+                "parts" => [
+                    ["text" => $prompt],
+                    ["inline_data" => ["mime_type" => "image/png", "data" => $base64Image]]
+                ]
+            ]
+        ],
+        "generationConfig" => [
+            "temperature" => 0.2
+        ]
+    ];
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode === 200) {
+        $data = json_decode($response, true);
+        $text = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+        $text = trim(preg_replace('/^```json\s*|\s*```$/i', '', $text));
+        $parsed = json_decode($text, true);
+        if ($parsed && isset($parsed['intro'])) {
+            return [
+                'intro' => $parsed['intro'],
+                'points' => isset($parsed['points']) && is_array($parsed['points']) ? $parsed['points'] : []
+            ];
+        }
+    }
+
+    return [
+         'intro' => '店舗紹介文の自動生成中にエラーが発生しました。',
+         'points' => ['エラーにより生成できませんでした']
+    ];
+}
+
 // --- リクエスト処理 ---
 
 // GETリクエストでNGワード一覧を返す
@@ -231,6 +283,11 @@ if (isset($input['action']) && $input['action'] === 'zip') {
             $zip->addFromString($img['name'], $imgData);
         }
     }
+    
+    if (!empty($input['texts_content'])) {
+        $zip->addFromString('store_info_list.txt', $input['texts_content']);
+    }
+
     $zip->close();
     
     $zipData = file_get_contents($zipFileName);
@@ -329,15 +386,21 @@ foreach ($urls as $index => $url) {
 
         // 2. 画像診断（OCRおよび顔検出）
         // ユーザーが指定したサイズ領域（ファーストビュー）のみを対象に判定を行う
-        send_progress(round($baseProgress + ($step * 0.7)), "AI画像診断（OCR等）をサーバーで実行中…");
+        $extractedText = '';
+        send_progress(round($baseProgress + ($step * 0.6)), "AI画像診断（OCR等）をサーバーで実行中…");
         try {
-            $isNg = check_image_for_ng_words($finalImageData, $ngWords, $googleCloudVisionApiKey);
+            $isNg = check_image_for_ng_words($finalImageData, $ngWords, $googleCloudVisionApiKey, $extractedText);
         }
         catch (Exception $e) {
             flock($fp, LOCK_UN);
             fclose($fp);
             send_json_error("テキスト解析(OCR)中にエラーが発生しました: " . $e->getMessage(), 500);
         }
+
+        // 3. テキスト自動生成 (Gemini)
+        $base64Image = base64_encode($finalImageData);
+        send_progress(round($baseProgress + ($step * 0.8)), "AIテキスト生成(Gemini)を実行中…");
+        $storeInfo = generate_store_info_from_gemini($base64Image, $geminiApiKey);
 
         if ($isNg !== false) {
             $reason = is_array($isNg) ? $isNg['reason'] : $isNg;
@@ -378,9 +441,25 @@ foreach ($urls as $index => $url) {
                         'status' => 'ng',
                         'ng_reason' => $reason,
                         'image' => 'data:image/webp;base64,' . base64_encode($firstViewImageData),
-                        'ng_image' => 'data:image/webp;base64,' . base64_encode($ngImageData)
+                        'ng_image' => 'data:image/webp;base64,' . base64_encode($ngImageData),
+                        'intro' => $storeInfo['intro'],
+                        'points' => $storeInfo['points']
                     ];
                 }
+            } else {
+                // 顔検出のみ等の理由でverticesがない場合でも結果を追加
+                $originalHost = parse_url($url, PHP_URL_HOST);
+                $imageName = preg_replace('/^www\./', '', $originalHost) . '.webp';
+                $final_results[] = [
+                    'url' => $url,
+                    'name' => $imageName,
+                    'status' => 'ng',
+                    'ng_reason' => $reason,
+                    'image' => 'data:image/webp;base64,' . base64_encode($firstViewImageData),
+                    'ng_image' => 'data:image/webp;base64,' . base64_encode($firstViewImageData), // ng_imageが作れなかった場合のフォールバック
+                    'intro' => $storeInfo['intro'],
+                    'points' => $storeInfo['points']
+                ];
             }
         }
         else {
@@ -391,7 +470,9 @@ foreach ($urls as $index => $url) {
                 'url' => $url,
                 'name' => $imageName,
                 'status' => 'ok',
-                'image' => 'data:image/webp;base64,' . base64_encode($finalImageData)
+                'image' => 'data:image/webp;base64,' . base64_encode($finalImageData),
+                'intro' => $storeInfo['intro'],
+                'points' => $storeInfo['points']
             ];
         }
 

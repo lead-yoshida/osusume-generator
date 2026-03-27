@@ -247,6 +247,7 @@
         // Vision API: Google Cloud Console で HTTPリファラー制限を設定してください。
         const API_FLASH_KEY = '91b5039ab597473f90ac4ad1de56202f';
         const GOOGLE_CLOUD_VISION_API_KEY = 'AIzaSyASFBMI_Sgt5TsW9j4d_mifd2RR4U3P5cw';
+        const GEMINI_API_KEY = 'AIzaSyDymNDleDXe2STcrdWEQ9Ue9u50VyNrgf4';
         const MONTHLY_LIMIT = 100;
 
         // 医療広告ガイドライン関連のNGワードリスト
@@ -485,6 +486,63 @@
         // =====================================================
         // 1件のURL を処理する
         // =====================================================
+
+        /** 店舗紹介文とおすすめポイントの生成（Gemini 2.5 Flash使用） */
+        async function generateStoreInfoFromGemini(base64Image) {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+            const prompt = `この店舗WEBページのキャプチャ画像から、店舗の紹介文（200文字程度）、おすすめポイント（1行で3点）、および会社（店舗）の所在地を抽出・作成してください。所在地の例として「〒176-0012 東京都練馬区豊玉北4-23-11」のように郵便番号と住所を含めてください。出力は必ず以下のJSON形式のみとし、Markdown表記（\`\`\`jsonなど）は絶対に付けず、JSONのテキスト文字列のみを返してください。
+{
+    "intro": "紹介文テキスト",
+    "points": ["ポイント1", "ポイント2", "ポイント3"],
+    "address": "〒176-0012 東京都練馬区豊玉北4-23-11"
+}`;
+
+            const payload = {
+                contents: [{
+                    parts: [
+                        { text: prompt },
+                        { inline_data: { mime_type: "image/png", data: base64Image } }
+                    ]
+                }],
+                generationConfig: {
+                    temperature: 0.2
+                }
+            };
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    console.error("Gemini API Error:", await response.text());
+                    throw new Error("APIレスポンスエラー");
+                }
+
+                const data = await response.json();
+                let text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+                
+                // Markdownのコードブロック記法などを念のため除去
+                text = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+                
+                const parseData = JSON.parse(text);
+                return {
+                    intro: parseData.intro || "紹介文の生成に失敗しました",
+                    points: parseData.points && Array.isArray(parseData.points) ? parseData.points : ["生成に失敗しました"],
+                    address: parseData.address || "所在地の取得に失敗しました"
+                };
+            } catch (e) {
+                console.error("生成エラー:", e);
+                return {
+                    intro: '店舗紹介文の自動生成中にエラーが発生しました（または画像からテキストを読み取れませんでした）。',
+                    points: ['エラーにより生成できませんでした'],
+                    address: 'エラーにより取得できませんでした'
+                };
+            }
+        }
+
         async function processOneUrl(url, width, height, mode) {
             // 1. スクリーンショット取得
             const fullBlob = await fetchScreenshot(url, width);
@@ -496,9 +554,14 @@
             const hostname = new URL(url).hostname.replace(/^www\./, '');
             const imageName = `${hostname}.png`;
 
-            // 3. OCR + 顔検出（医療モードのみ）
+            // 共通の画像Base64 (Cloud Vision API / Gemini APIに送る用)
+            const base64 = await blobToBase64(croppedBlob);
+
+            // 3. テキスト自動生成（Gemini API）: ※待たせずに並行処理も可能だが、今回はそのままawait
+            const storeInfo = await generateStoreInfoFromGemini(base64);
+
+            // 4. OCR + 顔検出（医療モードのみ）
             if (mode === 'medical') {
-                const base64 = await blobToBase64(croppedBlob);
                 let isNg;
                 try {
                     isNg = await checkImageForNgWords(base64);
@@ -517,14 +580,20 @@
                         url, name: imageName, status: 'ng',
                         ng_reason: ngReason,
                         image: imageDataUrl,
-                        ng_image: ngImageDataUrl
+                        ng_image: ngImageDataUrl,
+                        intro: storeInfo.intro,
+                        points: storeInfo.points,
+                        address: storeInfo.address
                     };
                 }
             }
 
             return {
                 url, name: imageName, status: 'ok',
-                image: imageDataUrl
+                image: imageDataUrl,
+                intro: storeInfo.intro,
+                points: storeInfo.points,
+                address: storeInfo.address
             };
         }
 
@@ -575,11 +644,29 @@
                 box.style.borderRadius = '5px';
                 box.style.backgroundColor = '#fff';
 
+                let infoHtml = '';
+                if (item.intro && item.points) {
+                    const pointsHtml = item.points.map(p => `<li>${p}</li>`).join('');
+                    const addressHtml = item.address ? `<h5 style="margin-top: 0; margin-bottom: 10px; color: #004085; font-size: 1.05em;">📍 所在地</h5><p style="font-size: 0.95em; color: #333; line-height: 1.6; margin-bottom: 20px; white-space: pre-wrap;">${item.address}</p>` : '';
+                    infoHtml = `
+                        <div style="margin-top: 20px; padding: 20px; background: #f1f8ff; border: 1px solid #cce5ff; border-radius: 8px;">
+                            ${addressHtml}
+                            <h5 style="margin-top: 0; margin-bottom: 10px; color: #004085; font-size: 1.05em;">📝 店舗紹介文</h5>
+                            <p style="font-size: 0.95em; color: #333; line-height: 1.6; margin-bottom: 20px; white-space: pre-wrap;">${item.intro}</p>
+                            <h5 style="margin-top: 0; margin-bottom: 10px; color: #004085; font-size: 1.05em;">✨ おすすめポイント</h5>
+                            <ul style="margin: 0; padding-left: 20px; font-size: 0.95em; color: #333; line-height: 1.6;">
+                                ${pointsHtml}
+                            </ul>
+                        </div>
+                    `;
+                }
+
                 if (item.status === 'ok') {
                     box.style.borderColor = '#28a745';
                     box.innerHTML = `
                         <h4 style="color: #28a745; margin-top: 0;">✅ 問題無し: <a href="${item.url}" target="_blank" style="color: #28a745; text-decoration: underline;">${item.url}</a></h4>
                         <img src="${item.image}" style="max-width: 100%; border: 1px solid #eee;">
+                        ${infoHtml}
                     `;
                 } else {
                     allOk = false;
@@ -588,8 +675,8 @@
                         <h4 style="color: #dc3545; margin-top: 0;">⚠️ NG判定: <a href="${item.url}" target="_blank" style="color: #dc3545; text-decoration: underline;">${item.url}</a></h4>
                         <p style="color: #dc3545; font-weight: bold;">理由: ${item.ng_reason}</p>
                         <img src="${item.ng_image}" style="max-width: 100%; border: 3px solid #dc3545; margin-bottom: 15px;">
-
-                        <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 10px;">
+                        ${infoHtml}
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 15px;">
                             <p style="margin-top: 0; font-weight: bold;">この画像に対するアクションを選択してください：</p>
                             <button onclick="markAsOk(${index})" style="background-color: #ffc107; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 15px;">特例として「問題無し」とする</button>
 
@@ -620,22 +707,28 @@
             btn.textContent = 'ダウンロード準備中...';
 
             try {
-                if (globalState.length === 1) {
-                    // 1枚だけの場合は直接ダウンロード
-                    const a = document.createElement('a');
-                    a.href = globalState[0].image;
-                    a.download = globalState[0].name;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    return;
-                }
-
-                // 複数枚: JSZip で ZIP 生成
+                // 常に複数枚: JSZip で ZIP 生成する（テキストデータを含めるため）
                 const zip = new JSZip();
+                let textsContent = '';
+
                 for (const item of globalState) {
                     const base64 = item.image.split(',')[1];
                     zip.file(item.name, base64, { base64: true });
+
+                    if (item.intro && item.points) {
+                        textsContent += `【URL】${item.url}\n`;
+                        if (item.address && item.address !== '所在地の取得に失敗しました' && item.address !== 'エラーにより取得できませんでした') {
+                            textsContent += `【所在地】\n${item.address}\n\n`;
+                        }
+                        textsContent += `【店舗紹介文】\n${item.intro}\n\n`;
+                        textsContent += `【おすすめポイント】\n`;
+                        item.points.forEach((p, i) => textsContent += ` ${i+1}. ${p}\n`);
+                        textsContent += `----------------------------------------\n\n`;
+                    }
+                }
+
+                if (textsContent) {
+                    zip.file('store_info_list.txt', textsContent);
                 }
 
                 const zipBlob = await zip.generateAsync({ type: 'blob' });

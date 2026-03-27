@@ -300,11 +300,27 @@ $usageMessage = "今月の作成枚数 (目安): {$count} / {$limit} 枚";
                 box.style.borderRadius = '5px';
                 box.style.backgroundColor = '#fff';
 
+                let infoHtml = '';
+                if (item.intro && item.points) {
+                    const pointsHtml = item.points.map(p => `<li>${p}</li>`).join('');
+                    infoHtml = `
+                        <div style="margin-top: 20px; padding: 20px; background: #f1f8ff; border: 1px solid #cce5ff; border-radius: 8px;">
+                            <h5 style="margin-top: 0; margin-bottom: 10px; color: #004085; font-size: 1.05em;">📝 店舗紹介文</h5>
+                            <p style="font-size: 0.95em; color: #333; line-height: 1.6; margin-bottom: 20px; white-space: pre-wrap;">${item.intro}</p>
+                            <h5 style="margin-top: 0; margin-bottom: 10px; color: #004085; font-size: 1.05em;">✨ おすすめポイント</h5>
+                            <ul style="margin: 0; padding-left: 20px; font-size: 0.95em; color: #333; line-height: 1.6;">
+                                ${pointsHtml}
+                            </ul>
+                        </div>
+                    `;
+                }
+
                 if (item.status === 'ok') {
                     box.style.borderColor = '#28a745';
                     box.innerHTML = `
                         <h4 style="color: #28a745; margin-top: 0;">✅ 問題無し: <a href="${item.url}" target="_blank" style="color: #28a745; text-decoration: underline;">${item.url}</a></h4>
                         <img src="${item.image}" style="max-width: 100%; border: 1px solid #eee;">
+                        ${infoHtml}
                     `;
                 } else {
                     allOk = false;
@@ -313,8 +329,8 @@ $usageMessage = "今月の作成枚数 (目安): {$count} / {$limit} 枚";
                         <h4 style="color: #dc3545; margin-top: 0;">⚠️ NG判定: <a href="${item.url}" target="_blank" style="color: #dc3545; text-decoration: underline;">${item.url}</a></h4>
                         <p style="color: #dc3545; font-weight: bold;">理由: ${item.ng_reason}</p>
                         <img src="${item.ng_image}" style="max-width: 100%; border: 3px solid #dc3545; margin-bottom: 15px;">
-                        
-                        <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 10px;">
+                        ${infoHtml}
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 15px;">
                             <p style="margin-top: 0; font-weight: bold;">この画像に対するアクションを選択してください：</p>
                             <button onclick="markAsOk(${index})" style="background-color: #ffc107; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 15px;">特例として「問題無し」とする</button>
                             
@@ -342,26 +358,24 @@ $usageMessage = "今月の作成枚数 (目安): {$count} / {$limit} 枚";
             btn.disabled = true;
             btn.textContent = 'ダウンロード準備中...';
 
-            if (globalState.length === 1) {
-                // シングルなら直接ダウンロード
-                const a = document.createElement('a');
-                a.href = globalState[0].image;
-                a.download = globalState[0].name;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                btn.disabled = false;
-                btn.textContent = 'すべての画像をダウンロードする';
-                return;
-            }
-
-            // 複数ならZIP化をバックエンドへ依頼
+            // 常にZIP化をバックエンドへ依頼する（テキストデータを含めるため）
             const images = globalState.map(s => ({ name: s.name, data: s.image }));
+            let textsContent = '';
+            globalState.forEach(s => {
+                if (s.intro && s.points) {
+                    textsContent += `【URL】${s.url}\n`;
+                    textsContent += `【店舗紹介文】\n${s.intro}\n\n`;
+                    textsContent += `【おすすめポイント】\n`;
+                    s.points.forEach((p, i) => textsContent += ` ${i+1}. ${p}\n`);
+                    textsContent += `----------------------------------------\n\n`;
+                }
+            });
+
             try {
                 const response = await fetch('capture.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'zip', images: images })
+                    body: JSON.stringify({ action: 'zip', images: images, texts_content: textsContent })
                 });
                 const result = await response.json();
                 if (result.success && result.zip_base64) {
